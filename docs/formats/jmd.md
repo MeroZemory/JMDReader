@@ -77,7 +77,7 @@ uint GetJmdKey(string fileName) {
 
 ### 디렉토리 키
 ```c
-uint GetDirectoryKey(uint jmdKey) {
+uint GetDirectoryDataKey(uint jmdKey) {
     return jmdKey - 0x41014EBF;
 }
 ```
@@ -90,6 +90,26 @@ uint GetFileKey(uint jmdKey, string fileName, uint extNum) {
     key += extNum;
     key += (jmdKey - 0x7E2AF33D);
     return key;
+}
+```
+
+### 블록 키
+```c
+uint GetBlockFirstKey(uint jmdKey) {
+    return jmdKey ^ 0x3A9213AC;
+}
+
+byte[] ExtendKey(uint key) {
+    byte[] output = new byte[64];
+    uint curData = key ^ 0x8473fbc1;
+    for(int i = 0; i < 16; i++) {
+        output[i*4] = (byte)curData;
+        output[i*4+1] = (byte)(curData >> 8);
+        output[i*4+2] = (byte)(curData >> 16);
+        output[i*4+3] = (byte)(curData >> 24);
+        curData -= 0x7b8c043f;
+    }
+    return output;
 }
 ```
 
