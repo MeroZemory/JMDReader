@@ -63,21 +63,26 @@ namespace Raycity.File
         /// <exception cref="Exception"></exception>
         public void Open(string filePath)
         {
-            if(!System.IO.File.Exists(filePath))
+            Debug.WriteLine($"=== JMD Reader 로그 ===");
+            Debug.WriteLine($"파일 경로: {filePath}");
+
+            if (!System.IO.File.Exists(filePath))
                 throw new FileNotFoundException($"");
             _jmdStream = new FileStream(filePath, FileMode.Open);
             if (_jmdStream.Length < 0x80)
                 throw new InvalidOperationException();
 
             _jmdKey = JmdKey.GetJmdKey(Path.GetFileNameWithoutExtension(filePath));
+            Debug.WriteLine($"JMD 키: 0x{_jmdKey:X8}");
 
             // Checks identifier
-
             BinaryReader reader = new BinaryReader(_jmdStream);
 
             _jmdStream.Seek(0x0, SeekOrigin.Begin);
             byte[] identifierData = reader.ReadBytes(0x40);
             string converftedStr = Encoding.Unicode.GetString(identifierData, 0, RhLayerIdentifiers[0].Length << 1);
+            Debug.WriteLine($"식별자: {converftedStr}");
+
             int layerVersion = -1;
             for (int i = 0; i < RhLayerIdentifiers.Length; i++)
                 if (converftedStr == RhLayerIdentifiers[i])
@@ -93,7 +98,10 @@ namespace Raycity.File
             // Read jmd archive info
             _jmdStream.Seek(0x80, SeekOrigin.Begin);
             byte[] jmdArchiveInfoData = reader.ReadBytes(0x80);
+            Debug.WriteLine($"암호화된 아카이브 정보 처음 4바이트: {BitConverter.ToString(jmdArchiveInfoData, 0, 4)}");
+
             jmdArchiveInfoData = JmdEncrypt.DecryptData(_jmdKey, jmdArchiveInfoData);
+            Debug.WriteLine($"복호화된 아카이브 정보 처음 4바이트: {BitConverter.ToString(jmdArchiveInfoData, 0, 4)}");
 
             int dataInfoCount = 0;
             byte[] dataInfoKey = new byte[0];
@@ -104,6 +112,7 @@ namespace Raycity.File
                 BinaryReader memReader = new BinaryReader(memStream);   
                 uint infoDataChksum = memReader.ReadUInt32();
                 uint verifyChkSum = Adler.Adler32(0, jmdArchiveInfoData, 4, 0x7C); 
+                Debug.WriteLine($"체크섬: 0x{infoDataChksum:X8}, 계산된 체크섬: 0x{verifyChkSum:X8}");
                 if (infoDataChksum != verifyChkSum)
                     throw new Exception("jmd file modified.");
                 int versionChkCode = memReader.ReadInt32();
