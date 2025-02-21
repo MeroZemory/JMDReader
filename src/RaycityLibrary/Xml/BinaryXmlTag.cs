@@ -16,7 +16,7 @@ namespace Raycity.Xml
         private string _name;
         private string _text;
         private Dictionary<string, string> _attributes;
-        private List<BinaryXmlTag> _children;
+        private List<BinaryXmlTag> _children = [];
         #endregion
 
         #region Properties
@@ -40,16 +40,20 @@ namespace Raycity.Xml
         {
             get
             {
+                ArgumentNullException.ThrowIfNull(t);
                 var found = _children.Find(x => x.Name == t);
                 return found ?? new BinaryXmlTag(t);
             }
             set
             {
-                int index = Children.FindIndex(x => x.Name == t);
+                ArgumentNullException.ThrowIfNull(t);
+                ArgumentNullException.ThrowIfNull(value);
+
+                int index = _children.FindIndex(x => x.Name == t);
                 if (index == -1)
-                    Children.Add(value);
+                    _children.Add(value);
                 else
-                    Children[index] = value;
+                    _children[index] = value;
             }
         }
         
@@ -58,7 +62,6 @@ namespace Raycity.Xml
         #region Constructor
         public BinaryXmlTag()
         {
-            _children = new List<BinaryXmlTag>();
             _attributes = new Dictionary<string, string>();
             _name = "";
             _text = "";
