@@ -40,7 +40,8 @@ namespace Raycity.Xml
         {
             get
             {
-                return _children.Find(x => x.Name == t);
+                var found = _children.Find(x => x.Name == t);
+                return found ?? new BinaryXmlTag(t);
             }
             set
             {
