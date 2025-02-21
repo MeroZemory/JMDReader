@@ -13,11 +13,11 @@ namespace Raycity.IO
         {
             
         }
-        public override void DecodeObject(BinaryReader reader, Dictionary<short, RaycityObject>? decodedObjectMap, Dictionary<short, object> decodedFieldMap)
+        public override void DecodeObject(BinaryReader reader, Dictionary<short, RaycityObject>? decodedObjectMap, Dictionary<short, object>? decodedFieldMap)
         {
             Name = reader.ReadText();
         }
-        public override void EncodeObject(BinaryWriter writer, Dictionary<short, RaycityObject>? decodedObjectMap, Dictionary<short, object> decodedFieldMap)
+        public override void EncodeObject(BinaryWriter writer, Dictionary<short, RaycityObject>? decodedObjectMap, Dictionary<short, object>? decodedFieldMap)
         {
             writer.WriteKRString(Name);
         }
