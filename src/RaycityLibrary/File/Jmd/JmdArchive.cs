@@ -50,6 +50,8 @@ namespace Raycity.File
         public JmdArchive()
         {
             _rootFolder = new JmdFolder();
+            _dataInfoMap = [];
+            _fileHandlers = [];
         }
         #endregion
 
@@ -76,7 +78,7 @@ namespace Raycity.File
             Debug.WriteLine($"JMD 키: 0x{_jmdKey:X8}");
 
             // Checks identifier
-            BinaryReader reader = new BinaryReader(_jmdStream);
+            BinaryReader reader = new(_jmdStream);
 
             _jmdStream.Seek(0x0, SeekOrigin.Begin);
             byte[] identifierData = reader.ReadBytes(0x40);
@@ -104,12 +106,12 @@ namespace Raycity.File
             Debug.WriteLine($"복호화된 아카이브 정보 처음 4바이트: {BitConverter.ToString(jmdArchiveInfoData, 0, 4)}");
 
             int dataInfoCount = 0;
-            byte[] dataInfoKey = new byte[0];
+            byte[] dataInfoKey = [];
 
             // Decode jmd archive info
-            using (MemoryStream memStream = new MemoryStream(jmdArchiveInfoData))
+            using (MemoryStream memStream = new(jmdArchiveInfoData))
             {
-                BinaryReader memReader = new BinaryReader(memStream);   
+                BinaryReader memReader = new(memStream);   
                 uint infoDataChksum = memReader.ReadUInt32();
                 uint verifyChkSum = Adler.Adler32(0, jmdArchiveInfoData, 4, 0x7C); 
                 Debug.WriteLine($"체크섬: 0x{infoDataChksum:X8}, 계산된 체크섬: 0x{verifyChkSum:X8}");
@@ -118,6 +120,8 @@ namespace Raycity.File
                 int versionChkCode = memReader.ReadInt32();
                 dataInfoCount = memReader.ReadInt32();
                 uint dataInfoWhiteningKey = memReader.ReadUInt32(); // adler(fileNameWithExt) + 6c0b80043
+                Debug.WriteLine($"데이터 정보 개수: {dataInfoCount}");
+                Debug.WriteLine($"데이터 정보 키: 0x{dataInfoWhiteningKey:X8}");
                 
                 dataInfoKey = memReader.ReadBytes(0x20);
                 uint endMagicCode = memReader.ReadUInt32();
@@ -132,36 +136,43 @@ namespace Raycity.File
             for(int i = 0; i < dataInfoCount; i++)
             {
                 JmdDataInfo dataInfo = reader.ReadBlockInfo(dataInfoKey);
+                Debug.WriteLine($"데이터 블록 {i}: 인덱스=0x{dataInfo.Index:X8}, 오프셋=0x{dataInfo.Offset:X8}, 크기={dataInfo.DataSize}, 압축해제크기={dataInfo.UncompressedSize}, 속성={dataInfo.BlockProperty}");
                 _dataInfoMap.Add(dataInfo.Index, dataInfo);
             }
 
             // Read all folders and all files info.
             uint folderKey = JmdKey.GetDirectoryDataKey(_jmdKey);
+            Debug.WriteLine($"\n=== 폴더 구조 파싱 시작 ===");
+            Debug.WriteLine($"폴더 키: 0x{folderKey:X8}");
 
-            Queue<(uint folderDataIndex, JmdFolder folder)> procssQueue = new Queue<(uint folderDataIndex, JmdFolder folder)>();
+            Queue<(uint folderDataIndex, JmdFolder folder)> procssQueue = new();
             procssQueue.Enqueue((0xFFFFFFFF, _rootFolder));
 
             while(procssQueue.Count > 0)
             {
                 var queObj = procssQueue.Dequeue();
+                Debug.WriteLine($"\n폴더 데이터 읽기: {queObj.folder.Name}, 인덱스=0x{queObj.folderDataIndex:X8}");
                 byte[] folderData = getData(queObj.folderDataIndex, folderKey);
-                using(MemoryStream memStream = new MemoryStream(folderData))
+                using(MemoryStream memStream = new(folderData))
                 {
-                    BinaryReader memReader = new BinaryReader(memStream);
+                    BinaryReader memReader = new(memStream);
                     int folderCount = memReader.ReadInt32();
+                    Debug.WriteLine($"하위 폴더 수: {folderCount}");
                     for(int i = 0; i < folderCount; i++)
                     {
-                        JmdFolder subFolder = new JmdFolder();
+                        JmdFolder subFolder = new();
                         string name = memReader.ReadNullTerminatedText(true);
                         uint folderDataIndex = memReader.ReadUInt32();
+                        Debug.WriteLine($"  하위 폴더 {i+1}: {name}, 인덱스=0x{folderDataIndex:X8}");
                         subFolder.Name = name;
                         procssQueue.Enqueue((folderDataIndex, subFolder));
                         queObj.folder.AddFolder(subFolder);
                     }
                     int fileCount = memReader.ReadInt32();
+                    Debug.WriteLine($"파일 수: {fileCount}");
                     for(int i = 0; i < fileCount; i++)
                     {
-                        JmdFile subFile = new JmdFile();
+                        JmdFile subFile = new();
                         string fileName = memReader.ReadNullTerminatedText(true);
                         uint extInt = memReader.ReadUInt32();
                         int fileProperty = memReader.ReadInt32();
@@ -169,9 +180,10 @@ namespace Raycity.File
                         int fileSize = memReader.ReadInt32();
                         uint fileKey = JmdKey.GetFileKey(_jmdKey, fileName, extInt);
                         string fileExtension = Encoding.ASCII.GetString(BitConverter.GetBytes(extInt)).TrimEnd('\0');
+                        Debug.WriteLine($"  파일 {i+1}: {fileName}.{fileExtension}, 크기={fileSize}, 속성={fileProperty}, 인덱스=0x{dataIndex:X8}, 키=0x{fileKey:X8}");
 
-                        JmdFileHandler fileHandler = new JmdFileHandler(this, (JmdFileProperty)fileProperty, dataIndex, fileSize, fileKey);
-                        JmdDataSource bufferedDataSource = new JmdDataSource(fileHandler);
+                        JmdFileHandler fileHandler = new(this, (JmdFileProperty)fileProperty, dataIndex, fileSize, fileKey);
+                        JmdDataSource bufferedDataSource = new(fileHandler);
                         subFile.DataSource = bufferedDataSource;
                         subFile.Name = $"{fileName}.{fileExtension}";
                         subFile.FileEncryptionProperty = (JmdFileProperty)fileProperty;
@@ -204,8 +216,8 @@ namespace Raycity.File
             string outFileName = Path.GetFileNameWithoutExtension(fullName);
             uint outJmdKey = JmdKey.GetJmdKey(outFileName);
 
-            Queue<DataSavingInfo> dataSavingQueue = new Queue<DataSavingInfo>();
-            HashSet<uint> usedIndex = new HashSet<uint>();
+            Queue<DataSavingInfo> dataSavingQueue = [];
+            HashSet<uint> usedIndex = [];
             int dataEndOffset = 0;
             storeFolderAndFiles(RootFolder, dataSavingQueue, usedIndex, ref dataEndOffset, outJmdKey);
             if (_jmdStream is not null)
@@ -223,13 +235,13 @@ namespace Raycity.File
             if(_fileHandlers is null)
                 _fileHandlers = new Dictionary<uint, JmdFileHandler>(dataSavingQueue.Count);
             // Begin write to out file.
-            FileStream outFileStream = new FileStream(fullName, FileMode.Create);
-            int dataInfoSize = (((dataSavingQueue.Count) * 0x20) + 0xFF) & (0x7FFFFF00);
+            FileStream outFileStream = new(fullName, FileMode.Create);
+            int dataInfoSize = (dataSavingQueue.Count * 0x20 + 0xFF) & 0x7FFFFF00;
             int dataBeginOffset = 0x100 + dataInfoSize;
             dataEndOffset += dataBeginOffset;
 
             // Write Identifier Text
-            BinaryWriter outWriter = new BinaryWriter(outFileStream);
+            BinaryWriter outWriter = new(outFileStream);
             outWriter.Write(Encoding.Unicode.GetBytes(RhLayerIdentifiers[_layerVersion]));
             outFileStream.Seek(0x40, SeekOrigin.Begin);
             outWriter.Write(Encoding.Unicode.GetBytes(RhLayerSecondText));
@@ -241,9 +253,9 @@ namespace Raycity.File
             byte[] jmdHeaderData = new byte[0x80]; //Without header checksum
             byte[] dataInfoKey = new byte[0x20];
             generateDataInfoKey(dataInfoKey);
-            using (MemoryStream memStream = new MemoryStream(0x7C))
+            using (MemoryStream memStream = new(0x7C))
             {
-                BinaryWriter memWriter = new BinaryWriter(memStream);
+                BinaryWriter memWriter = new(memStream);
                 memWriter.Write(_layerVersion | 0x100);
                 memWriter.Write(dataSavingQueue.Count);
                 memWriter.Write(dataInfoWhiteningKey);
@@ -263,9 +275,9 @@ namespace Raycity.File
             foreach (DataSavingInfo dataSavingInfo in dataSavingQueue)
             {
                 byte[] dataInfoEncData = new byte[0x20];
-                using(MemoryStream memStream = new MemoryStream(0x20))
+                using(MemoryStream memStream = new(0x20))
                 {
-                    BinaryWriter memWriter = new BinaryWriter(memStream);
+                    BinaryWriter memWriter = new(memStream);
                     memWriter.Write(dataSavingInfo.DataInfo.Index);
                     memWriter.Write((int)((dataSavingInfo.DataInfo.Offset + dataBeginOffset) >> 8));
                     memWriter.Write(dataSavingInfo.DataInfo.DataSize);
@@ -276,13 +288,15 @@ namespace Raycity.File
                     memStream.Seek(0, SeekOrigin.Begin);
                     memStream.Read(dataInfoEncData, 0, dataInfoEncData.Length);
                 }
-                JmdDataInfo jmdDataInfo = new JmdDataInfo();
-                jmdDataInfo.Index = dataSavingInfo.DataInfo.Index;
-                jmdDataInfo.Offset = dataSavingInfo.DataInfo.Offset + dataBeginOffset;
-                jmdDataInfo.DataSize = dataSavingInfo.DataInfo.DataSize;
-                jmdDataInfo.UncompressedSize = dataSavingInfo.DataInfo.UncompressedSize;
-                jmdDataInfo.BlockProperty = dataSavingInfo.DataInfo.BlockProperty;
-                jmdDataInfo.Checksum = dataSavingInfo.DataInfo.Checksum;
+                JmdDataInfo jmdDataInfo = new()
+                {
+                    Index = dataSavingInfo.DataInfo.Index,
+                    Offset = dataSavingInfo.DataInfo.Offset + dataBeginOffset,
+                    DataSize = dataSavingInfo.DataInfo.DataSize,
+                    UncompressedSize = dataSavingInfo.DataInfo.UncompressedSize,
+                    BlockProperty = dataSavingInfo.DataInfo.BlockProperty,
+                    Checksum = dataSavingInfo.DataInfo.Checksum
+                };
                 _dataInfoMap.Add(jmdDataInfo.Index, jmdDataInfo);
 
                 JmdEncrypt.EncryptDataInfo(dataInfoKey, dataInfoEncData, 0, dataInfoEncData.Length);
@@ -298,7 +312,7 @@ namespace Raycity.File
                 if(dataSavingInfo.File is not null)
                 {
                     JmdFile file = dataSavingInfo.File;
-                    JmdFileHandler fileHandler = new JmdFileHandler(this, file.FileEncryptionProperty, dataSavingInfo.DataInfo.Index, file.Size, JmdKey.GetFileKey(outJmdKey, file.NameWithoutExt, file.getExtNum()));
+                    JmdFileHandler fileHandler = new(this, file.FileEncryptionProperty, dataSavingInfo.DataInfo.Index, file.Size, JmdKey.GetFileKey(outJmdKey, file.NameWithoutExt, file.getExtNum()));
                     _fileHandlers.Add(dataSavingInfo.DataInfo.Index, fileHandler);
                     file.DataSource = new JmdDataSource(fileHandler);
                 }
@@ -340,8 +354,14 @@ namespace Raycity.File
         {
             if (!_dataInfoMap.ContainsKey(dataIndex))
                 throw new Exception("index not exist.");
-            FileStream clonedJmdStream = new FileStream(_jmdStream.SafeFileHandle, FileAccess.Read);
+            if (_jmdStream is null)
+                throw new Exception("jmd file not opened.");
+            FileStream clonedJmdStream = new(_jmdStream.SafeFileHandle, FileAccess.Read);
             JmdDataInfo dataInfo = _dataInfoMap[dataIndex];
+
+            Debug.WriteLine($"=== 데이터 블록 처리 ===");
+            Debug.WriteLine($"인덱스: 0x{dataIndex:X8}, 오프셋: 0x{dataInfo.Offset:X8}, 크기: {dataInfo.DataSize}");
+            Debug.WriteLine($"블록 속성: {dataInfo.BlockProperty}");
 
             clonedJmdStream.Seek(dataInfo.Offset, SeekOrigin.Begin);
             byte[] outData = new byte[dataInfo.DataSize];
@@ -349,15 +369,18 @@ namespace Raycity.File
             
             if ((dataInfo.BlockProperty & JmdDataInfoProperty.Compressed) != JmdDataInfoProperty.None)
             {
-                using(MemoryStream memStream = new MemoryStream(outData))
+                Debug.WriteLine("압축 데이터 해제 중...");
+                using(MemoryStream memStream = new(outData))
                 {
                     outData = new byte[dataInfo.UncompressedSize];
-                    ZLibStream decompressStream = new ZLibStream(memStream, System.IO.Compression.CompressionMode.Decompress);
+                    ZLibStream decompressStream = new(memStream, CompressionMode.Decompress);
                     decompressStream.Read(outData, 0, outData.Length);
                 }
+                Debug.WriteLine($"압축 해제 완료: {outData.Length} 바이트");
             }
             if((dataInfo.BlockProperty & JmdDataInfoProperty.PartialEncrypted) != JmdDataInfoProperty.None)
             {
+                Debug.WriteLine("데이터 복호화 중...");
                 JmdEncrypt.DecryptData(key, outData, 0, outData.Length);
             }
             if(dataInfo.BlockProperty == JmdDataInfoProperty.PartialEncrypted)
@@ -365,6 +388,7 @@ namespace Raycity.File
                 JmdDataInfo? secDatainfo = _dataInfoMap.ContainsKey(dataIndex + 1) ? _dataInfoMap[dataIndex + 1] : null;
                 if(secDatainfo is not null)
                 {
+                    Debug.WriteLine($"부분 암호화 데이터의 두 번째 블록 처리: 인덱스=0x{(dataIndex+1):X8}, 크기={secDatainfo.DataSize}");
                     Array.Resize(ref outData, outData.Length + secDatainfo.DataSize);
                     clonedJmdStream.Read(outData, dataInfo.DataSize, secDatainfo.DataSize);
                 }
@@ -381,12 +405,12 @@ namespace Raycity.File
                 folderDataIndex += 0x5F03E367;
             byte[] folderData;
             
-            Queue<DataSavingInfo> fileSavingInfoQueue = new Queue<DataSavingInfo>();
+            Queue<DataSavingInfo> fileSavingInfoQueue = new();
 
             // Encode folder
-            using (MemoryStream memStream = new MemoryStream())
+            using (MemoryStream memStream = new())
             {
-                BinaryWriter memWriter = new BinaryWriter(memStream);
+                BinaryWriter memWriter = new(memStream);
                 IReadOnlyCollection<JmdFolder> subFolders = folder.Folders;
                 IReadOnlyCollection<JmdFile> subFiles = folder.Files;
                 memWriter.Write(subFolders.Count);
@@ -409,7 +433,7 @@ namespace Raycity.File
                     byte[] fileData = subFile.GetBytes();
                     uint fileChksum = 0;
 
-                    while (((usedIndex.Contains(fileDataIndex) || usedIndex.Contains(fileDataIndex + 1))))
+                    while (usedIndex.Contains(fileDataIndex) || usedIndex.Contains(fileDataIndex + 1))
                         fileDataIndex += 0x4D21CB4F;
                     
                     if (subFile.FileEncryptionProperty == JmdFileProperty.Encrypted || subFile.FileEncryptionProperty == JmdFileProperty.CompressedEncrypted)
@@ -423,9 +447,9 @@ namespace Raycity.File
                     }
                     if (subFile.FileEncryptionProperty == JmdFileProperty.CompressedEncrypted || subFile.FileEncryptionProperty == JmdFileProperty.Compressed)
                     {
-                        using (MemoryStream ms = new MemoryStream())
+                        using (MemoryStream ms = new())
                         {
-                            Ionic.Zlib.ZlibStream compressStream = new Ionic.Zlib.ZlibStream(ms, Ionic.Zlib.CompressionMode.Compress, Ionic.Zlib.CompressionLevel.BestCompression ,true);
+                            Ionic.Zlib.ZlibStream compressStream = new(ms, Ionic.Zlib.CompressionMode.Compress, Ionic.Zlib.CompressionLevel.BestCompression ,true);
                             compressStream.Write(fileData, 0, fileData.Length);
                             compressStream.Flush();
                             compressStream.Close();
@@ -439,8 +463,7 @@ namespace Raycity.File
                     memWriter.Write(fileDataIndex);
                     memWriter.Write(fileSize);
 
-                    DataSavingInfo fileSavingInfo = new DataSavingInfo();
-                    fileSavingInfo.File = subFile;
+                    DataSavingInfo fileSavingInfo = new() { File = subFile };
                     if(subFile.FileEncryptionProperty == JmdFileProperty.PartialEncrypted)
                     {
                         fileSavingInfo.Data = new byte[Math.Min(0x100, fileData.Length)];
@@ -454,13 +477,19 @@ namespace Raycity.File
                         fileSavingInfoQueue.Enqueue(fileSavingInfo);
                         if (fileData.Length > 0x100)
                         {
-                            DataSavingInfo secFileSavingInfo = new DataSavingInfo();
-                            secFileSavingInfo.Data = new byte[fileData.Length - 0x100];
-                            secFileSavingInfo.DataInfo.Index = fileDataIndex + 1;
-                            secFileSavingInfo.DataInfo.BlockProperty = JmdDataInfoProperty.None;
-                            secFileSavingInfo.DataInfo.DataSize = secFileSavingInfo.Data.Length;
-                            secFileSavingInfo.DataInfo.UncompressedSize = secFileSavingInfo.Data.Length;
-                            secFileSavingInfo.DataInfo.Checksum = 0;
+                            var dataLength = fileData.Length - 0x100;
+                            DataSavingInfo secFileSavingInfo = new() 
+                            {
+                                Data = new byte[dataLength],
+                                DataInfo = 
+                                {
+                                    Index = fileDataIndex + 1,
+                                    BlockProperty = JmdDataInfoProperty.None,
+                                    DataSize = dataLength,
+                                    UncompressedSize = dataLength,
+                                    Checksum = 0
+                                }
+                            };
                             Array.Copy(fileData, 0x100, secFileSavingInfo.Data, 0, secFileSavingInfo.Data.Length);
                             usedIndex.Add(fileDataIndex + 1);
                             fileSavingInfoQueue.Enqueue(secFileSavingInfo);
@@ -500,7 +529,7 @@ namespace Raycity.File
             uint folderKey = JmdKey.GetDirectoryDataKey(outJmdKey);
             JmdEncrypt.EncryptData(folderKey, folderData, 0, folderData.Length);
 
-            DataSavingInfo folderSavingInfo = new DataSavingInfo();
+            DataSavingInfo folderSavingInfo = new();
             folderSavingInfo.Data = folderData;
             folderSavingInfo.DataInfo.Offset = dataOffset;
             folderSavingInfo.DataInfo.Index = folderDataIndex;
@@ -531,7 +560,7 @@ namespace Raycity.File
 
         private unsafe void generateDataInfoKey(byte[] outKeyBuffer)
         {
-            Random random = new Random();
+            Random random = new();
             fixed(byte* bPtr = outKeyBuffer)
             {
                 for(int i = 0; i < 24; i++)
@@ -553,9 +582,9 @@ namespace Raycity.File
         #region Structs
         private class DataSavingInfo
         {
-            public JmdDataInfo DataInfo = new JmdDataInfo();
+            public JmdDataInfo DataInfo = new();
             public JmdFile? File;
-            public byte[] Data;
+            public byte[] Data = [];
         }
         #endregion
     }
@@ -564,10 +593,7 @@ namespace Raycity.File
     public partial class JmdArchive
     {
         #region Constants
-        public readonly string[] RhLayerIdentifiers = new string[]
-        {
-            "J2m Data Format 1.0",
-        };
+        public readonly string[] RhLayerIdentifiers = ["J2m Data Format 1.0"];
         public const string RhLayerSecondText = "j2m & raycity flighting!!";
         #endregion
     }
