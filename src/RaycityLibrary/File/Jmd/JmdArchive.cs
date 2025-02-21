@@ -449,10 +449,10 @@ namespace Raycity.File
                     {
                         using (MemoryStream ms = new())
                         {
-                            Ionic.Zlib.ZlibStream compressStream = new(ms, Ionic.Zlib.CompressionMode.Compress, Ionic.Zlib.CompressionLevel.BestCompression ,true);
-                            compressStream.Write(fileData, 0, fileData.Length);
-                            compressStream.Flush();
-                            compressStream.Close();
+                            using (ZLibStream compressStream = new(ms, CompressionMode.Compress, true))
+                            {
+                                compressStream.Write(fileData, 0, fileData.Length);
+                            }
                             fileData = ms.ToArray();
                         }
                     }

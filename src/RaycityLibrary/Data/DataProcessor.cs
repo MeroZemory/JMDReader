@@ -110,7 +110,7 @@ namespace Raycity
                 using (MemoryStream ms = new MemoryStream(processedData))
                 {
                     processedData = new byte[DecompressSize];
-                    Ionic.Zlib.ZlibStream zs = new Ionic.Zlib.ZlibStream(ms, Ionic.Zlib.CompressionMode.Decompress);
+                    ZLibStream zs = new ZLibStream(ms, CompressionMode.Decompress);
                     zs.Read(processedData, 0, processedData.Length);
                 }
             }
