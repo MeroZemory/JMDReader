@@ -1,0 +1,60 @@
+---
+description: C# 코딩 컨벤션
+globs: 
+---
+# C# 코딩 컨벤션
+
+## 1. Collection 초기화
+- 빈 컬렉션 초기화 시 collection expression (`[]`) 사용
+- 적용 대상: 배열, List, Queue, HashSet 등 컬렉션 타입
+```csharp
+// ✅ 권장
+byte[] data = [];
+List<int> list = [];
+Queue<string> queue = [];
+
+// ❌ 지양
+byte[] data = new byte[0];
+List<int> list = new();
+Queue<string> queue = new Queue<string>();
+```
+
+## 2. 수식 괄호
+- 연산자 우선순위가 명확한 경우 불필요한 괄호 제거
+```csharp
+// ✅ 권장
+int size = (count * 0x20 + 0xFF) & 0x7FFFFF00;
+
+// ❌ 지양
+int size = (((count) * 0x20) + 0xFF) & (0x7FFFFF00);
+```
+
+## 3. 객체 초기화
+- 객체 생성 시 object initializer 문법 사용
+- 단일 속성 설정도 initializer로 통일
+```csharp
+// ✅ 권장
+var info = new DataInfo { Name = name };
+
+// ❌ 지양
+var info = new DataInfo();
+info.Name = name;
+```
+
+## 4. 다중 속성 초기화
+- 여러 속성 초기화 시 속성별 줄바꿈 사용
+```csharp
+// ✅ 권장
+var info = new DataInfo 
+{
+    Id = id,
+    Name = name,
+    Value = value
+};
+
+// ❌ 지양
+var info = new DataInfo();
+info.Id = id;
+info.Name = name;
+info.Value = value;
+```
