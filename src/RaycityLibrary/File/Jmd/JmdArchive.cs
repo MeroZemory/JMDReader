@@ -95,11 +95,19 @@ namespace Raycity.File
             if (layerVersion != 0)
                 throw new Exception();
             else
+            {
                 _layerVersion = layerVersion;
+                Debug.WriteLine($"=== 파일 식별 정보 ===");
+                Debug.WriteLine($"레이어 버전: {_layerVersion}");
+                Debug.WriteLine($"식별자 위치: 0x00-0x3F");
+                Debug.WriteLine($"보조 텍스트 위치: 0x40-0x7F");
+                Debug.WriteLine($"보조 텍스트: {RhLayerSecondText}");
+            }
 
             // Read jmd archive info
             _jmdStream.Seek(0x80, SeekOrigin.Begin);
             byte[] jmdArchiveInfoData = reader.ReadBytes(0x80);
+            Debug.WriteLine($"\n=== 아카이브 헤더 정보 (0x80-0xFF) ===");
             Debug.WriteLine($"암호화된 아카이브 정보 처음 4바이트: {BitConverter.ToString(jmdArchiveInfoData, 0, 4)}");
 
             jmdArchiveInfoData = JmdEncrypt.DecryptData(_jmdKey, jmdArchiveInfoData);
@@ -119,9 +127,11 @@ namespace Raycity.File
                     throw new Exception("jmd file modified.");
                 int versionChkCode = memReader.ReadInt32();
                 dataInfoCount = memReader.ReadInt32();
-                uint dataInfoWhiteningKey = memReader.ReadUInt32(); // adler(fileNameWithExt) + 6c0b80043
+                uint dataInfoWhiteningKey = memReader.ReadUInt32();
+                Debug.WriteLine($"버전 체크코드: 0x{versionChkCode:X8}");
                 Debug.WriteLine($"데이터 정보 개수: {dataInfoCount}");
                 Debug.WriteLine($"데이터 정보 키: 0x{dataInfoWhiteningKey:X8}");
+                Debug.WriteLine($"매직코드: 0xd24e8143");
                 
                 dataInfoKey = memReader.ReadBytes(0x20);
                 uint endMagicCode = memReader.ReadUInt32();
@@ -131,12 +141,19 @@ namespace Raycity.File
             }
 
             // Read data information collection.
+            Debug.WriteLine($"\n=== 데이터 블록 정보 (0x100-) ===");
             _dataInfoMap = new Dictionary<uint, JmdDataInfo>(dataInfoCount);
             _fileHandlers = new Dictionary<uint, JmdFileHandler>(dataInfoCount);
             for(int i = 0; i < dataInfoCount; i++)
             {
                 JmdDataInfo dataInfo = reader.ReadBlockInfo(dataInfoKey);
-                Debug.WriteLine($"데이터 블록 {i}: 인덱스=0x{dataInfo.Index:X8}, 오프셋=0x{dataInfo.Offset:X8}, 크기={dataInfo.DataSize}, 압축해제크기={dataInfo.UncompressedSize}, 속성={dataInfo.BlockProperty}");
+                Debug.WriteLine($"\n데이터 블록 {i}:");
+                Debug.WriteLine($"  인덱스: 0x{dataInfo.Index:X8}");
+                Debug.WriteLine($"  오프셋: 0x{dataInfo.Offset:X8}");
+                Debug.WriteLine($"  데이터 크기: {dataInfo.DataSize} 바이트");
+                Debug.WriteLine($"  압축해제 크기: {dataInfo.UncompressedSize} 바이트");
+                Debug.WriteLine($"  블록 속성: {dataInfo.BlockProperty}");
+                Debug.WriteLine($"  체크섬: 0x{dataInfo.Checksum:X8}");
                 _dataInfoMap.Add(dataInfo.Index, dataInfo);
             }
 
@@ -151,26 +168,35 @@ namespace Raycity.File
             while(procssQueue.Count > 0)
             {
                 var queObj = procssQueue.Dequeue();
-                Debug.WriteLine($"\n폴더 데이터 읽기: {queObj.folder.Name}, 인덱스=0x{queObj.folderDataIndex:X8}");
+                Debug.WriteLine($"\n=== 폴더 파싱 시작: {queObj.folder.Name} ===");
+                Debug.WriteLine($"폴더 데이터 읽기: {queObj.folder.Name}, 인덱스=0x{queObj.folderDataIndex:X8}");
                 byte[] folderData = getData(queObj.folderDataIndex, folderKey);
+                Debug.WriteLine($"읽은 데이터 크기: {folderData.Length} 바이트");
+                Debug.WriteLine($"복호화된 데이터 처음 16바이트: {BitConverter.ToString(folderData, 0, Math.Min(4, folderData.Length))}");
+
                 using(MemoryStream memStream = new(folderData))
                 {
                     BinaryReader memReader = new(memStream);
                     int folderCount = memReader.ReadInt32();
-                    Debug.WriteLine($"하위 폴더 수: {folderCount}");
-                    for(int i = 0; i < folderCount; i++)
+                    Debug.WriteLine($"하위 폴더 수: {folderCount} (0x{folderCount:X8})");
+                    Debug.WriteLine($"현재 스트림 위치: 0x{memStream.Position:X8}");
+
+                    for(int i = 0; i < folderCount && folderCount > 0 && folderCount < 1000000; i++)
                     {
                         JmdFolder subFolder = new();
                         string name = memReader.ReadNullTerminatedText(true);
                         uint folderDataIndex = memReader.ReadUInt32();
-                        Debug.WriteLine($"  하위 폴더 {i+1}: {name}, 인덱스=0x{folderDataIndex:X8}");
+                        Debug.WriteLine($"  하위 폴더 {i+1}: 이름={name}, 인덱스=0x{folderDataIndex:X8}");
                         subFolder.Name = name;
                         procssQueue.Enqueue((folderDataIndex, subFolder));
                         queObj.folder.AddFolder(subFolder);
                     }
+
                     int fileCount = memReader.ReadInt32();
-                    Debug.WriteLine($"파일 수: {fileCount}");
-                    for(int i = 0; i < fileCount; i++)
+                    Debug.WriteLine($"파일 수: {fileCount} (0x{fileCount:X8})");
+                    Debug.WriteLine($"현재 스트림 위치: 0x{memStream.Position:X8}");
+
+                    for(int i = 0; i < fileCount && fileCount > 0 && fileCount < 1000000; i++)
                     {
                         JmdFile subFile = new();
                         string fileName = memReader.ReadNullTerminatedText(true);
@@ -191,6 +217,9 @@ namespace Raycity.File
                         _fileHandlers.Add(dataIndex, fileHandler);
                         queObj.folder.AddFile(subFile);
                     }
+
+                    Debug.WriteLine($"=== 폴더 파싱 완료: {queObj.folder.Name} ===");
+                    Debug.WriteLine($"최종 하위 폴더 수: {queObj.folder.Folders.Count}, 파일 수: {queObj.folder.Files.Count}");
                 }
             }
         }
@@ -359,38 +388,49 @@ namespace Raycity.File
             FileStream clonedJmdStream = new(_jmdStream.SafeFileHandle, FileAccess.Read);
             JmdDataInfo dataInfo = _dataInfoMap[dataIndex];
 
-            Debug.WriteLine($"=== 데이터 블록 처리 ===");
-            Debug.WriteLine($"인덱스: 0x{dataIndex:X8}, 오프셋: 0x{dataInfo.Offset:X8}, 크기: {dataInfo.DataSize}");
-            Debug.WriteLine($"블록 속성: {dataInfo.BlockProperty}");
+            Debug.WriteLine($"\n=== 데이터 블록 처리 ===");
+            Debug.WriteLine($"블록 정보:");
+            Debug.WriteLine($"  인덱스: 0x{dataIndex:X8}");
+            Debug.WriteLine($"  오프셋: 0x{dataInfo.Offset:X8}");
+            Debug.WriteLine($"  크기: {dataInfo.DataSize} 바이트");
+            Debug.WriteLine($"  블록 속성: {dataInfo.BlockProperty}");
+            Debug.WriteLine($"  처리 키: 0x{key:X8}");
 
             clonedJmdStream.Seek(dataInfo.Offset, SeekOrigin.Begin);
             byte[] outData = new byte[dataInfo.DataSize];
             clonedJmdStream.Read(outData, 0, dataInfo.DataSize);
+            Debug.WriteLine($"원본 데이터 크기: {outData.Length} 바이트");
             
             if ((dataInfo.BlockProperty & JmdDataInfoProperty.Compressed) != JmdDataInfoProperty.None)
             {
-                Debug.WriteLine("압축 데이터 해제 중...");
+                Debug.WriteLine("\n압축 해제 처리:");
+                Debug.WriteLine($"  압축 데이터 크기: {outData.Length} 바이트");
                 using(MemoryStream memStream = new(outData))
                 {
                     outData = new byte[dataInfo.UncompressedSize];
                     ZLibStream decompressStream = new(memStream, CompressionMode.Decompress);
                     decompressStream.Read(outData, 0, outData.Length);
                 }
-                Debug.WriteLine($"압축 해제 완료: {outData.Length} 바이트");
+                Debug.WriteLine($"  압축 해제 후 크기: {outData.Length} 바이트");
             }
             if((dataInfo.BlockProperty & JmdDataInfoProperty.PartialEncrypted) != JmdDataInfoProperty.None)
             {
-                Debug.WriteLine("데이터 복호화 중...");
+                Debug.WriteLine("\n복호화 처리:");
+                Debug.WriteLine($"  복호화 전 데이터 크기: {outData.Length} 바이트");
                 JmdEncrypt.DecryptData(key, outData, 0, outData.Length);
+                Debug.WriteLine($"  복호화 후 데이터 크기: {outData.Length} 바이트");
             }
             if(dataInfo.BlockProperty == JmdDataInfoProperty.PartialEncrypted)
             {
                 JmdDataInfo? secDatainfo = _dataInfoMap.ContainsKey(dataIndex + 1) ? _dataInfoMap[dataIndex + 1] : null;
                 if(secDatainfo is not null)
                 {
-                    Debug.WriteLine($"부분 암호화 데이터의 두 번째 블록 처리: 인덱스=0x{(dataIndex+1):X8}, 크기={secDatainfo.DataSize}");
+                    Debug.WriteLine("\n부분 암호화 추가 블록 처리:");
+                    Debug.WriteLine($"  두 번째 블록 인덱스: 0x{(dataIndex+1):X8}");
+                    Debug.WriteLine($"  두 번째 블록 크기: {secDatainfo.DataSize} 바이트");
                     Array.Resize(ref outData, outData.Length + secDatainfo.DataSize);
                     clonedJmdStream.Read(outData, dataInfo.DataSize, secDatainfo.DataSize);
+                    Debug.WriteLine($"  최종 데이터 크기: {outData.Length} 바이트");
                 }
             }
             return outData;
@@ -436,25 +476,45 @@ namespace Raycity.File
                     while (usedIndex.Contains(fileDataIndex) || usedIndex.Contains(fileDataIndex + 1))
                         fileDataIndex += 0x4D21CB4F;
                     
-                    if (subFile.FileEncryptionProperty == JmdFileProperty.Encrypted || subFile.FileEncryptionProperty == JmdFileProperty.CompressedEncrypted)
+                    if (subFile.FileEncryptionProperty == JmdFileProperty.Encrypted || 
+                        subFile.FileEncryptionProperty == JmdFileProperty.CompressedEncrypted)
                     {
                         fileChksum = Adler.Adler32(0, fileData, 0, fileData.Length);
+                        Debug.WriteLine($"\n=== 파일 암호화 처리 ===");
+                        Debug.WriteLine($"파일: {subFile.Name}");
+                        Debug.WriteLine($"암호화 전 데이터 크기: {fileData.Length} 바이트");
+                        Debug.WriteLine($"체크섬: 0x{fileChksum:X8}");
+                        Debug.WriteLine($"암호화 키: 0x{fileKey:X8}");
                         JmdEncrypt.EncryptData(fileKey, fileData, 0, fileData.Length);
+                        Debug.WriteLine($"암호화 후 데이터 크기: {fileData.Length} 바이트");
                     }
                     else if (subFile.FileEncryptionProperty == JmdFileProperty.PartialEncrypted)
                     {
+                        Debug.WriteLine($"\n=== 파일 부분 암호화 처리 ===");
+                        Debug.WriteLine($"파일: {subFile.Name}");
+                        Debug.WriteLine($"전체 데이터 크기: {fileData.Length} 바이트");
+                        Debug.WriteLine($"암호화 영역 크기: {Math.Min(0x100, fileData.Length)} 바이트");
+                        Debug.WriteLine($"암호화 키: 0x{fileKey:X8}");
                         JmdEncrypt.EncryptData(fileKey, fileData, 0, Math.Min(0x100, fileData.Length));
+                        Debug.WriteLine($"암호화 완료");
                     }
-                    if (subFile.FileEncryptionProperty == JmdFileProperty.CompressedEncrypted || subFile.FileEncryptionProperty == JmdFileProperty.Compressed)
+
+                    if (subFile.FileEncryptionProperty == JmdFileProperty.Compressed || 
+                        subFile.FileEncryptionProperty == JmdFileProperty.CompressedEncrypted)
                     {
-                        using (MemoryStream ms = new())
+                        Debug.WriteLine($"\n=== 파일 압축 처리 ===");
+                        Debug.WriteLine($"파일: {subFile.Name}");
+                        Debug.WriteLine($"압축 전 데이터 크기: {fileData.Length} 바이트");
+                        using (var ms = new MemoryStream())
                         {
-                            using (ZLibStream compressStream = new(ms, CompressionMode.Compress, true))
+                            using (var compressStream = new System.IO.Compression.ZLibStream(ms, System.IO.Compression.CompressionMode.Compress))
                             {
                                 compressStream.Write(fileData, 0, fileData.Length);
                             }
                             fileData = ms.ToArray();
                         }
+                        Debug.WriteLine($"압축 후 데이터 크기: {fileData.Length} 바이트");
+                        Debug.WriteLine($"압축률: {((1.0 - (double)fileData.Length / subFile.Size) * 100):F2}%");
                     }
 
                     memWriter.WriteNullTerminatedText(subFile.NameWithoutExt, true); 
